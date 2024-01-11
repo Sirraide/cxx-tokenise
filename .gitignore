@@ -1,0 +1,12 @@
+## IDE and editor files.
+.idea/
+.vscode/
+.cache/
+
+## Build files.
+/out/
+/cxx-tokenise
+/cxx-tokenise.exe
+
+## Valgrind.
+callgrind.out.*
