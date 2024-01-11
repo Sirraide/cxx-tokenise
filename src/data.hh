@@ -18,16 +18,20 @@ enum struct Tk {
     HeaderName,
     Ident,
     Keyword,
+    Member,
     Namespace,
     Number,
     Punct,
     RawStringDelimiter,
     StringLiteral,
     Typedef,
+    TypeKeyword,
+    Variable,
     Whitespace,
 };
 
 extern std::unordered_set<std::string_view> keywords;
+extern std::unordered_set<std::string_view> type_keywords;
 extern std::unordered_set<std::string_view> known_namespaces;
 extern std::unordered_set<std::string_view> known_std_classes;
 extern std::unordered_set<std::string_view> known_std_functions;

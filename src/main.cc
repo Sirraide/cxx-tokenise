@@ -11,7 +11,7 @@ struct fmt::formatter<Tk> {
     constexpr auto parse(ParseContext& ctx) { return ctx.begin(); }
 
     template <typename FormatContext>
-    auto format(Tk const& t, FormatContext& ctx) {
+    auto format(const Tk& t, FormatContext& ctx) {
         switch (t) {
             case Tk::Invalid: return format_to(ctx.out(), "Invalid");
             case Tk::Eof: return format_to(ctx.out(), "Eof");
@@ -26,12 +26,15 @@ struct fmt::formatter<Tk> {
             case Tk::HeaderName: return format_to(ctx.out(), "HeaderName");
             case Tk::Ident: return format_to(ctx.out(), "Ident");
             case Tk::Keyword: return format_to(ctx.out(), "Keyword");
+            case Tk::Member: return format_to(ctx.out(), "Member");
             case Tk::Namespace: return format_to(ctx.out(), "Namespace");
             case Tk::Number: return format_to(ctx.out(), "Number");
             case Tk::Punct: return format_to(ctx.out(), "Punct");
             case Tk::RawStringDelimiter: return format_to(ctx.out(), "RawStringDelimiter");
             case Tk::StringLiteral: return format_to(ctx.out(), "StringLiteral");
             case Tk::Typedef: return format_to(ctx.out(), "Typedef");
+            case Tk::TypeKeyword: return format_to(ctx.out(), "TypeKeyword");
+            case Tk::Variable: return format_to(ctx.out(), "Variable");
             case Tk::Whitespace: return format_to(ctx.out(), "Whitespace");
         }
 
@@ -72,9 +75,28 @@ class Parser {
     std::vector<Token> tokens;
     Token EofToken{.type = Tk::Eof, .text = {curr, 0}};
 
+    /// Parameters etc. are tracked on a per-scope basis.
+    struct Scope {
+        std::unordered_map<std::string_view, Tk> known_identifiers;
+    };
+
+    std::vector<Scope> scopes;
+
+    /// But typenames are global since local classes are rare.
+    std::unordered_set<std::string_view> known_type_names;
+
 public:
     Parser(std::string_view content) : content{content} {
+        scopes.emplace_back();
         while (curr != end) Next();
+    }
+
+    static bool Is(Token& tk, std::same_as<Tk> auto... tks) {
+        return ((tk.type == tks) or ...);
+    }
+
+    static bool Is(std::string_view a, std::convertible_to<std::string_view> auto... svs) {
+        return ((a == svs) or ...);
     }
 
     static bool IsDigit(char c);
@@ -86,9 +108,11 @@ public:
     void DumpTokens();
     auto ToString() -> std::string;
 
+    void EnterScope();
+    void LeaveScope();
     void LexCharOrStringLiteral(bool raw);
     void Next();
-    auto Prev(usz index) -> Token&;
+    auto Prev(usz index, bool ignore_whitespace = true) -> Token&;
     void ReadWhile(Token& tok, bool Predicate(char));
 
     auto Sv() { return std::string_view{curr, usz(end - curr)}; }
@@ -165,6 +189,15 @@ bool Parser::IsWhitespace(char c) {
     return " \t\n\r\v\f"sv.contains(c);
 }
 
+void Parser::EnterScope() {
+    scopes.emplace_back();
+}
+
+void Parser::LeaveScope() {
+    if (scopes.size() == 1) return;
+    scopes.pop_back();
+}
+
 void Parser::LexCharOrStringLiteral(const bool raw) {
     const char delim = *curr;
 
@@ -211,9 +244,21 @@ void Parser::LexCharOrStringLiteral(const bool raw) {
     while (curr != end) {
         if (auto c = *curr; c == '\\') {
             tok = &tokens.emplace_back(Tk::EscapeSequence);
-            if (curr + 1 == end) return;
-            tok->text = {curr, 2};
+            tok->text = {curr, 1};
             curr++;
+
+            /// Octal escape sequences means the next three
+            /// digits are part of the escape sequence.
+            if (IsDigit(*curr)) {
+                if (curr + 2 >= end) return;
+                tok->text = {tok->text.data(), tok->text.size() + 3};
+                curr += 3;
+                continue;
+            }
+
+            /// Single-character escape sequence.
+            if (curr == end) return;
+            tok->text = {tok->text.data(), tok->text.size() + 1};
             curr++;
         }
 
@@ -272,8 +317,16 @@ void Parser::Next() {
         /// Identifier.
         auto& tok = tokens.emplace_back(Tk::Ident);
         ReadWhile(tok, IsIdentifierContinue);
+
+        /// Keyword.
         if (keywords.contains(tok.text)) {
             tok.type = Tk::Keyword;
+            return;
+        }
+
+        /// Builtin type.
+        if (type_keywords.contains(tok.text)) {
+            tok.type = Tk::TypeKeyword;
             return;
         }
 
@@ -305,6 +358,59 @@ void Parser::Next() {
             return;
         }
 
+        /// Identifiers after '.' are members.
+        if (Prev(1).type == Tk::Punct and (Prev(1).text.ends_with(".") or Prev(1).text.ends_with("->"))) {
+            tok.type = Tk::Member;
+            return;
+        }
+
+        /// Identifiers after certain keywords are special.
+        if (Prev(1).type == Tk::Keyword) {
+            if (Is(Prev(1).text, "class", "struct", "union", "enum")) {
+                tok.type = Tk::Class;
+                known_type_names.insert(tok.text);
+                return;
+            }
+
+            if (Prev(1).text == "using") {
+                tok.type = Tk::Typedef;
+                return;
+            }
+
+            if (Prev(1).text == "namespace") {
+                tok.type = Tk::Namespace;
+                return;
+            }
+        }
+
+        /// Check if this is a known identifier.
+        for (auto& sc : vws::reverse(scopes)) {
+            if (auto it = sc.known_identifiers.find(tok.text); it != sc.known_identifiers.end()) {
+                tok.type = it->second;
+                return;
+            }
+        }
+
+        /// Check if this is a known type name; these can be shadowed by identifiers.
+        if (known_type_names.contains(tok.text)) {
+            tok.type = Tk::Class;
+            return;
+        }
+
+        /// If an identifier follows another, the former is a type name
+        /// and the latter a variable name.
+        if (
+            Is(Prev(1), Tk::Ident, Tk::Class, Tk::Typedef, Tk::TypeKeyword) or
+            (Is(Prev(1), Tk::Keyword) and Is(Prev(1).text, "auto", "const", "constexpr", "register", "static", "volatile"))
+        ) {
+            tok.type = Tk::Variable;
+            if (Prev(1).type == Tk::Ident) {
+                known_type_names.insert(Prev(1).text);
+                Prev(1).type = Tk::Class;
+            }
+            return;
+        }
+
         /// Otherwise, this is just an identifier.
         return;
     }
@@ -322,11 +428,23 @@ void Parser::Next() {
     /// Punctuators (alternative representations excluded).
     if (IsPunct(*curr)) {
         auto& tok = tokens.emplace_back(Tk::Punct);
+
+        /// Opening and closing braces are single punctuators so we can handle
+        /// scope entry/exit to push/pop known class names etc.
+        if (*curr == '{' or *curr == '}') {
+            tok.text = {curr, 1};
+            if (*curr == '{') EnterScope();
+            else LeaveScope();
+            curr++;
+            return;
+        }
+
+        /// Otherwise, read the rest of the punctuator(s).
         ReadWhile(tok, IsPunct);
 
         /// Handle preprocessor directives. Note that we allow whitespace,
         /// but not comments, inbetween the '#' and the directive name.
-        if (tok.text == "#" and (tokens.size() < 2 or tokens[tokens.size() - 2].text.contains('\n'))) {
+        if (tok.text == "#" and (tokens.size() == 1 or Prev(1, false).text.contains('\n'))) {
             if (IsWhitespace(*curr)) Next();
             if (curr == end or not IsNonDigit(*curr)) return;
             Next();
@@ -348,6 +466,20 @@ void Parser::Next() {
                 curr += tok.text.size();
                 return;
             }
+            return;
+        }
+
+        /// Open parens preceded by an identifier are function calls.
+        if (tok.text.starts_with('(') and (Is(Prev(1), Tk::Ident, Tk::Member, Tk::Variable))) {
+            Prev(1).type = Tk::Function;
+            return;
+        }
+
+        /// Identifiers directly before '<' with no whitespace inbetween
+        /// are templates, unless they are functions.
+        if (tok.text.starts_with("<") and Is(Prev(1, false), Tk::Ident, Tk::Variable)) {
+            Prev(1).type = Tk::Class;
+            return;
         }
 
         return;
@@ -371,9 +503,13 @@ void Parser::Next() {
     curr++;
 }
 
-auto Parser::Prev(usz index) -> Token& {
+auto Parser::Prev(usz index, bool ignore_whitespace) -> Token& {
     if (index >= tokens.size()) return EofToken;
-    return tokens[tokens.size() - index - 1];
+    for (auto it = std::next(tokens.rbegin()); index and it != tokens.rend(); it++) {
+        if (ignore_whitespace and it->type == Tk::Whitespace) continue;
+        if (--index == 0) return *it;
+    }
+    return EofToken;
 }
 
 void Parser::ReadWhile(Token& tok, bool Predicate(char)) {
@@ -395,7 +531,10 @@ auto Parser::ToString() -> std::string {
     std::string out;
     for (auto& t : tokens) {
         switch (t.type) {
-            case Tk::Invalid: out += "<invalid>";
+            case Tk::Invalid:
+                out += "<invalid>";
+                break;
+
             case Tk::Eof: break;
 
             case Tk::Unknown:
@@ -429,15 +568,18 @@ auto Parser::ToString() -> std::string {
                 break;
 
             case Tk::Ident:
+            case Tk::Variable:
                 out += fmt::format("\033[38m{}\033[m", t.text);
                 break;
 
             case Tk::Keyword:
             case Tk::Punct:
+            case Tk::TypeKeyword:
                 out += fmt::format("\033[31m{}\033[m", t.text);
                 break;
 
             case Tk::Number:
+            case Tk::Member:
                 out += fmt::format("\033[35m{}\033[m", t.text);
                 break;
 

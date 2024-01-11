@@ -23,7 +23,6 @@ endif()
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     find_program(MOLD_LINKER "mold")
     if (MOLD_LINKER)
-        add_compile_options(-fuse-ld=mold)
         add_link_options(-fuse-ld=mold)
     endif()
 endif()
@@ -121,11 +120,11 @@ endif()
 ## Debug/Release flags.
 if (NOT MSVC)
     target_compile_options(options INTERFACE
-        $<$<CONFIG:DEBUG>:-O0 -g3 -ggdb3 -rdynamic>
+        $<$<CONFIG:DEBUG>:-O0 -g3 -ggdb3 -fsanitize=address>
         $<$<CONFIG:RELEASE>:-O3 -march=native>
     )
     target_link_options(options INTERFACE
-        $<$<CONFIG:DEBUG>:-O0 -g3 -ggdb3 -rdynamic>
+        $<$<CONFIG:DEBUG>:-O0 -g3 -ggdb3 -rdynamic -fsanitize=address>
         $<$<CONFIG:RELEASE>:-O3 -march=native>
     )
 else()
