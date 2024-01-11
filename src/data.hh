@@ -33,6 +33,7 @@ enum struct Tk {
 extern std::unordered_set<std::string_view> keywords;
 extern std::unordered_set<std::string_view> type_keywords;
 extern std::unordered_set<std::string_view> known_namespaces;
+extern std::unordered_set<std::string_view> known_std_namespaces;
 extern std::unordered_set<std::string_view> known_std_classes;
 extern std::unordered_set<std::string_view> known_std_functions;
 extern std::unordered_set<std::string_view> known_std_typedefs;

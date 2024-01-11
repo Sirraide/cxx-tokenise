@@ -107,17 +107,29 @@ std::unordered_set<std::string_view> type_keywords{
 };
 
 std::unordered_set<std::string_view> known_namespaces{
-    "chr",
-    "chrono",
+    "abi",
     "clang",
-    "filesystem",
     "fmt",
     "fs",
     "llvm",
-    "ranges",
     "rgs",
-    "rng",
     "std",
+    "vws",
+};
+
+std::unordered_set<std::string_view> known_std_namespaces{
+    "chrono",
+    "decimal",
+    "experimental",
+    "filesystem",
+    "literals",
+    "numbers",
+    "placeholders",
+    "ranges",
+    "regex_constants",
+    "rel_ops",
+    "this_thread",
+    "views",
 };
 
 std::unordered_set<std::string_view> known_std_classes{

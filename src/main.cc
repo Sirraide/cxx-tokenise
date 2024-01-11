@@ -4,6 +4,7 @@
 #include <utils.hh>
 
 using namespace std::literals;
+namespace vws = std::views;
 
 template <>
 struct fmt::formatter<Tk> {
@@ -343,6 +344,11 @@ void Parser::Next() {
 
             if (known_std_functions.contains(tok.text)) {
                 tok.type = Tk::Function;
+                return;
+            }
+
+            if (known_std_namespaces.contains(tok.text)) {
+                tok.type = Tk::Namespace;
                 return;
             }
 
